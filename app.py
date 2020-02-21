@@ -251,7 +251,7 @@ class App:
             self._crawl()
 
             # Check the change
-            if not self._isChange():
+            if self._isChange():
                self._sendNotification()
 
             # Save data
