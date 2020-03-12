@@ -3,6 +3,7 @@ import sys
 import requests
 import json
 import re
+import io
 import logging, logging.handlers
 
 from datetime import datetime
@@ -41,30 +42,19 @@ class App:
     # - Parser
     @staticmethod
     def _parse(soup):
-        result = dict()
-        div_ = soup.find('div', class_='content')
+        result = {}
+        div_ = soup.find('div', class_='bvc_txt')
 
         # title
         result['title'] = div_.find('p', class_='s_descript').text
 
         # image
-        # -- 2020.03.05 이미지 삭제됨
-        # result['image'] = div_.find('div', class_='box_image').find('img')['src']
+        result['image'] = div_.find('div', class_='box_image').find('img')['src']
 
         # data
-        tds = div_.find('table', class_='num').find_all('td')
-        data_ = dict()
-        data_['confirm'] = App._asInt(tds[0].text)
-        data_['discharge'] = App._asInt(tds[1].text)
-        data_['death'] = App._asInt(tds[3].text)
-
-        result['data'] = data_
-
-        # for td in div_.find('table', class_='num').find_all('td'):
-        # for td in div_.find('table', class_='num').find_all('td', class_='w_bold'):
-        #     result['data'].append(App._asInt(td.text))
-#        for li in div_.find('ul', class_='s_listin_dot').find_all('li'):
-#            result['data'].append(App._asInt(li.text))
+        result['data'] = []
+        for li in div_.find('table', class_='num').find_all('td'):
+            result['data'].append(App._asInt(li.text))
 
         return result
 
@@ -79,9 +69,10 @@ class App:
         messages.append('▶ 격리해제 환자 수 증가 : {}\n'.format(App._comma(_diff['discharge'])))
         messages.append('▶ 사망자 수 증가 : {}\n\n'.format(App._comma(_diff['death'])))
         messages.append('※ 현재 환자 수 현황\n')
-        messages.append('▶ 확진환자 수 : {}\n'.format(App._comma(_next['data']["confirm"])))
-        messages.append('▶ 확진환자 격리해제 수 : {}\n'.format(App._comma(_next['data']["discharge"])))
-        messages.append('▶ 사망자 수 : {}\n\n'.format(App._comma(_next['data']["death"])))
+        messages.append('▶ 확진환자 수 : {}\n'.format(App._comma(_next['data'][0])))
+        messages.append('▶ 확진환자 격리해제 수 : {}\n'.format(App._comma(_next['data'][1])))
+        messages.append('▶ 사망자 수 : {}\n'.format(App._comma(_next['data'][2])))
+        messages.append('▶ 검사진행 수 : {}\n\n'.format(App._comma(_next['data'][3])))
         messages.append('Check at: {}\n'.format(App._at()))
         messages.append('======================\n')
         messages.append('▷ 더 보기 : {}\n'.format(_next['bbs']))
@@ -126,14 +117,14 @@ class App:
         if not os.path.isfile(file):
             self._logger.info('First loading.. write file & exit')
 
-            self._data = {'data':[{"confirm":0, "discharge":0, "death":0}]}
+            self._data = {'data':[]}
             self._save()
 
             sys.exit()
 
         with open(file, 'r', encoding='utf-8') as f:
             tmp = json.load(f)
-            tmp['data'] = tmp['data'][:5]
+            tmp['data'] = tmp['data'][:10]
             self._data = tmp
 
     # - 데이터 저장
@@ -154,17 +145,12 @@ class App:
             self._logger.info('Check changes number of patients ')
 
             prev = self._data['data'][0]
-            if prev["confirm"] == 0 or prev["discharge"] == 0 or prev["death"] == 0:
-                self._logger.info('Not enough data for checking change')
-                return False
-
             next = self._next['data']
 
             self._diff = dict()
-            self._diff['confirm'] = next['confirm'] - prev['confirm']
-            self._diff['discharge'] = next['discharge'] - prev['discharge']
-            self._diff['death'] = next['death'] - prev['death']
-            self._logger.info('Diff patients : Confirm {}, Discharge {}, Death {}'.format(self._diff['confirm'], self._diff['discharge'], self._diff['death']))
+            self._diff['confirm'] = next[0] - prev[0]
+            self._diff['discharge'] = next[1] - prev[1]
+            self._diff['death'] = next[2] - prev[2]
 
             return self._diff['confirm'] != 0 or self._diff['discharge'] != 0 or self._diff['death'] != 0
         except Exception as e:
@@ -205,22 +191,22 @@ class App:
             TARGET_URL = self._conf['notify']['URL']
             TOKEN = self._conf['notify']['TOKEN']
 
-            # # get image
-            # image_url = self._conf['default']['HOST'] + self._next['image']
-            # response = requests.get(image_url)
-            # imageFile = io.BytesIO(response.content)
+            # get image
+            image_url = self._conf['default']['HOST'] + self._next['image']
+            response = requests.get(image_url)
+            imageFile = io.BytesIO(response.content)
 
             # urls
             self._next['bbs'] = self._shortURL(self._conf['default']['MAIN'])
             self._next['move'] = self._shortURL(self._conf['default']['MOVE'])
 
             message = App._msg(self._next, self._diff)
-            print(message)
+
             headers = {'Authorization': 'Bearer {TOKEN}'.format(TOKEN=TOKEN)}
             data = {'message': message}
-            # files = {'imageFile': imageFile}
+            files = {'imageFile': imageFile}
 
-            response = requests.post(TARGET_URL, headers=headers, data=data)
+            response = requests.post(TARGET_URL, headers=headers, data=data, files=files)
 
             if response.status_code != 200:
                 raise Exception("Sending message is fail..")
@@ -243,6 +229,7 @@ class App:
 
             html = response.text
             soup = BeautifulSoup(html, 'lxml')
+
             self._next = self._parse(soup)
 
         except Exception as e:
@@ -265,7 +252,8 @@ class App:
 
             # Check the change
             if self._isChange():
-               self._sendNotification()
+                print(self._data)
+               # self._sendNotification()
 
             # Save data
             self._save()
